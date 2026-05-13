@@ -22,7 +22,9 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -42,14 +44,22 @@ public class PdfService {
     public UploadResponse processPdf(MultipartFile file) throws IOException {
         String fileId = UUID.randomUUID().toString();
 
-        Files.createDirectories(Paths.get(uploadDir));
-        Files.createDirectories(Paths.get(outputDir));
+        // Resolve absolute paths so they work reliably on Render / Docker
+        Path uploadPath = Paths.get(uploadDir).toAbsolutePath().normalize();
+        Path outputPathDir = Paths.get(outputDir).toAbsolutePath().normalize();
 
-        String originalPath = uploadDir + "/" + fileId + "_original.pdf";
-        file.transferTo(new File(originalPath));
+        Files.createDirectories(uploadPath);
+        Files.createDirectories(outputPathDir);
 
-        List<String> imageUrls = renderPagesToImages(originalPath, fileId);
-        List<UploadResponse.PageData> pagesData = extractTextWithPositions(originalPath, imageUrls);
+        Path originalFile = uploadPath.resolve(fileId + "_original.pdf");
+
+        // Use Files.copy instead of transferTo — works on all platforms including Render
+        Files.copy(file.getInputStream(), originalFile, StandardCopyOption.REPLACE_EXISTING);
+
+        String originalPathStr = originalFile.toString();
+
+        List<String> imageUrls = renderPagesToImages(originalPathStr, fileId, uploadPath);
+        List<UploadResponse.PageData> pagesData = extractTextWithPositions(originalPathStr, imageUrls);
         String html = generateHtml(pagesData);
 
         UploadResponse response = new UploadResponse();
@@ -62,7 +72,7 @@ public class PdfService {
         return response;
     }
 
-    private List<String> renderPagesToImages(String pdfPath, String fileId) throws IOException {
+    private List<String> renderPagesToImages(String pdfPath, String fileId, Path uploadPath) throws IOException {
         List<String> imageUrls = new ArrayList<>();
 
         try (PDDocument document = Loader.loadPDF(new File(pdfPath))) {
@@ -71,8 +81,8 @@ public class PdfService {
             for (int i = 0; i < document.getNumberOfPages(); i++) {
                 BufferedImage image = renderer.renderImageWithDPI(i, 192);
                 String imageName = fileId + "_page_" + i + ".png";
-                String imagePath = uploadDir + "/" + imageName;
-                ImageIO.write(image, "PNG", new File(imagePath));
+                Path imagePath = uploadPath.resolve(imageName);
+                ImageIO.write(image, "PNG", imagePath.toFile());
                 imageUrls.add(baseUrl + "/preview/" + imageName);
             }
         }
@@ -213,13 +223,18 @@ public class PdfService {
 
     public File generateEditedPdf(DownloadRequest request) throws IOException {
         String fileId = request.getFileId();
-        String originalPath = uploadDir + "/" + fileId + "_original.pdf";
-        String outputPath = outputDir + "/" + fileId + "_edited.pdf";
+
+        Path uploadPath = Paths.get(uploadDir).toAbsolutePath().normalize();
+        Path outputPathDir = Paths.get(outputDir).toAbsolutePath().normalize();
+        Files.createDirectories(outputPathDir);
+
+        Path originalFile = uploadPath.resolve(fileId + "_original.pdf");
+        Path outputFile = outputPathDir.resolve(fileId + "_edited.pdf");
 
         try {
-            PdfReader reader = new PdfReader(originalPath);
+            PdfReader reader = new PdfReader(originalFile.toString());
             Document document = new Document(reader.getPageSizeWithRotation(1));
-            PdfWriter writer = PdfWriter.getInstance(document, new FileOutputStream(outputPath));
+            PdfWriter writer = PdfWriter.getInstance(document, new FileOutputStream(outputFile.toFile()));
             document.open();
 
             PdfContentByte cb = writer.getDirectContent();
@@ -240,7 +255,7 @@ public class PdfService {
             throw new IOException("Error generating PDF: " + e.getMessage(), e);
         }
 
-        return new File(outputPath);
+        return outputFile.toFile();
     }
 
     private String getFontFamily(String fontName) {
@@ -269,6 +284,7 @@ public class PdfService {
     }
 
     public File getPreviewImage(String filename) {
-        return new File(uploadDir + "/" + filename);
+        Path uploadPath = Paths.get(uploadDir).toAbsolutePath().normalize();
+        return uploadPath.resolve(filename).toFile();
     }
 }
