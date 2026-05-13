@@ -144,11 +144,19 @@ public class PdfService {
             float pw = page.getWidth();
             float ph = page.getHeight();
 
-            html.append("<div class="pdf-page" data-page-index="").append(page.getPageNum() - 1).append("" ");
-            html.append("style="position:relative;width:").append(pw).append("px;height:").append(ph).append("px;background:white;">");
+            html.append("<div class=\"pdf-page\" data-page-index=\"")
+                .append(page.getPageNum() - 1)
+                .append("\" ");
+            html.append("style=\"position:relative;width:")
+                .append(pw)
+                .append("px;height:")
+                .append(ph)
+                .append("px;background:white;\">");
 
-            html.append("<img src="").append(page.getImageUrl()).append("" ");
-            html.append("style="position:absolute;top:0;left:0;width:100%;height:100%;z-index:1;pointer-events:none;user-select:none;" draggable="false">");
+            html.append("<img src=\"")
+                .append(page.getImageUrl())
+                .append("\" ");
+            html.append("style=\"position:absolute;top:0;left:0;width:100%;height:100%;z-index:1;pointer-events:none;user-select:none;\" draggable=\"false\">");
 
             for (TextBlockDTO block : page.getTextBlocks()) {
                 String fontFamily = getFontFamily(block.getFont());
@@ -157,11 +165,15 @@ public class PdfService {
                 float lineHeight = block.getSize() * 1.2f;
                 String safeText = escapeHtml(block.getText());
 
-                html.append("<div class="text-block" ");
-                html.append("data-block-index="").append(block.getBlockIndex()).append("" ");
-                html.append("data-page-index="").append(block.getPageIndex()).append("" ");
-                html.append("contenteditable="false" ");
-                html.append("style="");
+                html.append("<div class=\"text-block\" ");
+                html.append("data-block-index=\"")
+                    .append(block.getBlockIndex())
+                    .append("\" ");
+                html.append("data-page-index=\"")
+                    .append(block.getPageIndex())
+                    .append("\" ");
+                html.append("contenteditable=\"false\" ");
+                html.append("style=\"");
                 html.append("position:absolute;");
                 html.append("left:").append(block.getX()).append("px;");
                 html.append("top:").append(block.getY()).append("px;");
@@ -184,8 +196,10 @@ public class PdfService {
                 html.append("z-index:10;");
                 html.append("background:transparent;");
                 html.append("box-sizing:content-box;");
-                html.append("" ");
-                html.append("data-original-text="").append(safeText).append("">");
+                html.append("\" ");
+                html.append("data-original-text=\"")
+                    .append(safeText)
+                    .append("\">");
                 html.append(safeText);
                 html.append("</div>");
             }
