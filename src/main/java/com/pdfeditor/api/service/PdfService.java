@@ -9,6 +9,7 @@ import com.lowagie.text.pdf.PdfContentByte;
 import com.lowagie.text.pdf.PdfImportedPage;
 import com.lowagie.text.pdf.PdfReader;
 import com.lowagie.text.pdf.PdfWriter;
+import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.springframework.beans.factory.annotation.Value;
@@ -64,7 +65,7 @@ public class PdfService {
     private List<String> renderPagesToImages(String pdfPath, String fileId) throws IOException {
         List<String> imageUrls = new ArrayList<>();
 
-        try (PDDocument document = PDDocument.load(new File(pdfPath))) {
+        try (PDDocument document = Loader.loadPDF(new File(pdfPath))) {
             PDFRenderer renderer = new PDFRenderer(document);
 
             for (int i = 0; i < document.getNumberOfPages(); i++) {
