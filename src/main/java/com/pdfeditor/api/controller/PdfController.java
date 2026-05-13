@@ -80,7 +80,7 @@ public class PdfController {
             File htmlFile = new File(outputPath);
             return ResponseEntity.ok()
                 .contentType(MediaType.TEXT_HTML)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename="edited_document.html"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"edited_document.html\"")
                 .body(new FileSystemResource(htmlFile));
 
         } catch (IOException e) {
@@ -98,7 +98,7 @@ public class PdfController {
 
             return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_PDF)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename="edited_document.pdf"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"edited_document.pdf\"")
                 .body(new FileSystemResource(pdfFile));
 
         } catch (IOException e) {
