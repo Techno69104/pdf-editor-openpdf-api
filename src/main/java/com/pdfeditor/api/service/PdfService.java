@@ -11,7 +11,11 @@ import com.lowagie.text.pdf.PdfReader;
 import com.lowagie.text.pdf.PdfWriter;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.rendering.PDFRenderer;
+import org.apache.pdfbox.text.PDFTextStripper;
+import org.apache.pdfbox.text.TextPosition;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -44,7 +48,6 @@ public class PdfService {
     public UploadResponse processPdf(MultipartFile file) throws IOException {
         String fileId = UUID.randomUUID().toString();
 
-        // Resolve absolute paths so they work reliably on Render / Docker
         Path uploadPath = Paths.get(uploadDir).toAbsolutePath().normalize();
         Path outputPathDir = Paths.get(outputDir).toAbsolutePath().normalize();
 
@@ -52,8 +55,6 @@ public class PdfService {
         Files.createDirectories(outputPathDir);
 
         Path originalFile = uploadPath.resolve(fileId + "_original.pdf");
-
-        // Use Files.copy instead of transferTo — works on all platforms including Render
         Files.copy(file.getInputStream(), originalFile, StandardCopyOption.REPLACE_EXISTING);
 
         String originalPathStr = originalFile.toString();
@@ -93,59 +94,149 @@ public class PdfService {
     private List<UploadResponse.PageData> extractTextWithPositions(String pdfPath, List<String> imageUrls) throws IOException {
         List<UploadResponse.PageData> pagesData = new ArrayList<>();
 
-        try {
-            PdfReader reader = new PdfReader(pdfPath);
-
-            for (int pageNum = 1; pageNum <= reader.getNumberOfPages(); pageNum++) {
+        try (PDDocument document = Loader.loadPDF(new File(pdfPath))) {
+            for (int pageNum = 0; pageNum < document.getNumberOfPages(); pageNum++) {
                 UploadResponse.PageData pageData = new UploadResponse.PageData();
-                pageData.setPageNum(pageNum);
-                pageData.setImageUrl(imageUrls.get(pageNum - 1));
+                pageData.setPageNum(pageNum + 1);
+                pageData.setImageUrl(imageUrls.get(pageNum));
 
-                Rectangle pageSize = reader.getPageSizeWithRotation(pageNum);
-                pageData.setWidth(pageSize.getWidth());
-                pageData.setHeight(pageSize.getHeight());
+                PDPage page = document.getPage(pageNum);
+                PDRectangle mediaBox = page.getMediaBox();
+                pageData.setWidth(mediaBox.getWidth());
+                pageData.setHeight(mediaBox.getHeight());
 
-                List<TextBlockDTO> textBlocks = extractTextBlocks(reader, pageNum);
+                PositionTextStripper stripper = new PositionTextStripper(pageNum, mediaBox.getHeight());
+                stripper.setStartPage(pageNum + 1);
+                stripper.setEndPage(pageNum + 1);
+                stripper.getText(document);
+
+                List<TextBlockDTO> textBlocks = stripper.getBlocks();
+                if (textBlocks.isEmpty()) {
+                    TextBlockDTO block = new TextBlockDTO();
+                    block.setBlockIndex(0);
+                    block.setText("No editable text found on this page.");
+                    block.setX(50);
+                    block.setY(mediaBox.getHeight() / 2);
+                    block.setWidth(400);
+                    block.setHeight(20);
+                    block.setFont("Arial");
+                    block.setSize(12);
+                    block.setColor("#6b7280");
+                    block.setBold(false);
+                    block.setItalic(false);
+                    block.setPageIndex(pageNum);
+                    textBlocks.add(block);
+                }
+
                 pageData.setTextBlocks(textBlocks);
-
                 pagesData.add(pageData);
             }
-
-            reader.close();
-        } catch (Exception e) {
-            throw new IOException("Error extracting text: " + e.getMessage(), e);
         }
 
         return pagesData;
     }
 
-    private List<TextBlockDTO> extractTextBlocks(PdfReader reader, int pageNum) {
-        List<TextBlockDTO> blocks = new ArrayList<>();
+    /**
+     * Custom PDFBox text stripper that extracts text with exact positions,
+     * grouping characters into line-based text blocks.
+     */
+    private static class PositionTextStripper extends PDFTextStripper {
+        private final List<TextBlockDTO> blocks = new ArrayList<>();
+        private final List<TextPosition> currentLine = new ArrayList<>();
+        private float lastY = -1;
+        private int blockIndex = 0;
+        private final int pageIndex;
+        private final float pageHeight;
 
-        try {
-            byte[] content = reader.getPageContent(pageNum);
-            String contentStr = new String(content);
-
-            TextBlockDTO block = new TextBlockDTO();
-            block.setBlockIndex(0);
-            block.setText("Text extraction with OpenPDF requires custom content stream parsing. Consider using PDFBox for extraction and OpenPDF for generation.");
-            block.setX(50);
-            block.setY(50);
-            block.setWidth(400);
-            block.setHeight(20);
-            block.setFont("Arial");
-            block.setSize(12);
-            block.setColor("#111827");
-            block.setBold(false);
-            block.setItalic(false);
-            block.setPageIndex(pageNum - 1);
-            blocks.add(block);
-
-        } catch (Exception e) {
-            e.printStackTrace();
+        PositionTextStripper(int pageIndex, float pageHeight) throws IOException {
+            super();
+            this.pageIndex = pageIndex;
+            this.pageHeight = pageHeight;
+            setSortByPosition(true);
         }
 
-        return blocks;
+        @Override
+        protected void writeString(String text, List<TextPosition> textPositions) throws IOException {
+            for (TextPosition tp : textPositions) {
+                float y = tp.getYDirAdj();
+                if (lastY != -1 && Math.abs(y - lastY) > 4) {
+                    flushLine();
+                }
+                currentLine.add(tp);
+                lastY = y;
+            }
+        }
+
+        @Override
+        public void endPage(PDPage page) throws IOException {
+            flushLine();
+            super.endPage(page);
+        }
+
+        private void flushLine() {
+            if (currentLine.isEmpty()) return;
+
+            float minX = Float.MAX_VALUE;
+            float minY = Float.MAX_VALUE;
+            float maxX = 0;
+            float maxY = 0;
+            StringBuilder text = new StringBuilder();
+            String fontName = "Arial";
+            float fontSize = 12;
+
+            for (TextPosition tp : currentLine) {
+                float x = tp.getXDirAdj();
+                float y = tp.getYDirAdj();
+                float w = tp.getWidthDirAdj();
+                float h = tp.getHeightDir();
+
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                maxX = Math.max(maxX, x + w);
+                maxY = Math.max(maxY, y + h);
+                text.append(tp.getUnicode());
+
+                if (tp.getFont() != null) {
+                    String name = tp.getFont().getName();
+                    if (name != null && !name.isEmpty()) {
+                        fontName = name;
+                    }
+                }
+                fontSize = tp.getFontSizeInPt();
+            }
+
+            String lineText = text.toString().trim();
+            if (!lineText.isEmpty()) {
+                float width = maxX - minX + 10;
+                float height = maxY - minY + 4;
+
+                // PDF Y is bottom-origin; HTML is top-origin
+                float htmlY = pageHeight - maxY;
+
+                TextBlockDTO block = new TextBlockDTO();
+                block.setBlockIndex(blockIndex++);
+                block.setText(lineText);
+                block.setX(minX);
+                block.setY(htmlY);
+                block.setWidth(width);
+                block.setHeight(height);
+                block.setFont(fontName);
+                block.setSize(fontSize);
+                block.setColor("#111827");
+                block.setBold(false);
+                block.setItalic(false);
+                block.setPageIndex(pageIndex);
+                blocks.add(block);
+            }
+
+            currentLine.clear();
+            lastY = -1;
+        }
+
+        List<TextBlockDTO> getBlocks() {
+            flushLine();
+            return blocks;
+        }
     }
 
     private String generateHtml(List<UploadResponse.PageData> pages) {
